@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from .models import Deposit, Transfer, confirmations_for
+from .policy import ConfirmationPolicy, DepthSpec
 from .source import ChainSource
 
 __all__ = ["DepositWatcher"]
@@ -14,10 +15,11 @@ class DepositWatcher:
     """Turn raw transfers from a chain source into deposits.
 
     Each :meth:`poll` asks the source for transfers at or above the internal
-    cursor, holds them until they reach ``min_confirmations``, and then yields
-    them once. A transfer that was already reported is never reported again,
-    even if the source keeps returning it. Reorgs are not handled yet: a
-    transfer is trusted as soon as its block is deep enough.
+    cursor and holds them until they reach the depth the policy requires for
+    their asset. The transition from seen to confirmed happens once: a transfer
+    that was already reported is never reported again, even if the source keeps
+    returning it. Reorgs are not handled yet: a transfer is trusted as soon as
+    its block is deep enough.
     """
 
     def __init__(
@@ -25,23 +27,19 @@ class DepositWatcher:
         source: ChainSource,
         addresses: Iterable[str],
         *,
-        min_confirmations: int = 1,
+        policy: DepthSpec = 1,
         start_height: int = 0,
     ) -> None:
         watched = {address.strip() for address in addresses}
         watched.discard("")
         if not watched:
             raise ValueError("at least one address is required")
-        if min_confirmations < 1:
-            raise ValueError(
-                f"min_confirmations must be at least 1: {min_confirmations}"
-            )
         if start_height < 0:
             raise ValueError(f"start_height must not be negative: {start_height}")
 
         self._source = source
         self._addresses = watched
-        self._min_confirmations = min_confirmations
+        self._policy = ConfirmationPolicy.coerce(policy)
         self._cursor = start_height
         self._pending: dict[tuple[str, int], Transfer] = {}
         self._reported: set[tuple[str, int]] = set()
@@ -51,8 +49,8 @@ class DepositWatcher:
         return frozenset(self._addresses)
 
     @property
-    def min_confirmations(self) -> int:
-        return self._min_confirmations
+    def policy(self) -> ConfirmationPolicy:
+        return self._policy
 
     @property
     def pending(self) -> tuple[Transfer, ...]:
@@ -76,7 +74,7 @@ class DepositWatcher:
         matured: list[Deposit] = []
         for key, transfer in list(self._pending.items()):
             confirmations = confirmations_for(transfer.block, tip)
-            if confirmations < self._min_confirmations:
+            if not self._policy.is_confirmed(transfer.asset, confirmations):
                 continue
             del self._pending[key]
             self._reported.add(key)
