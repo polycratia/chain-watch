@@ -23,7 +23,11 @@ class ChainSource(Protocol):
     ) -> Iterable[Transfer]:
         """Return incoming transfers to ``addresses`` from ``since_height`` up.
 
-        The same transfer may be returned by more than one call; the watcher
-        deduplicates by transaction output.
+        The answer is a view of the current best chain, not a log of what was
+        ever seen: every transfer at or above ``since_height`` that is on chain
+        right now, carrying the block it sits in now. The watcher deduplicates
+        by transaction output, so returning the same transfer on every call is
+        expected; leaving one out means the chain dropped it, and the watcher
+        will take the deposit back.
         """
         ...

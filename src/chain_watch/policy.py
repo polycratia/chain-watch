@@ -71,6 +71,11 @@ class ConfirmationPolicy:
     def is_confirmed(self, asset: str, confirmations: int) -> bool:
         return confirmations >= self.depth_for(asset)
 
+    @property
+    def max_depth(self) -> int:
+        """The deepest requirement anywhere in the policy."""
+        return max([self.default, *self.per_asset.values()])
+
     def with_asset(self, asset: str, depth: int) -> ConfirmationPolicy:
         """Return a copy that requires ``depth`` for ``asset``."""
         return ConfirmationPolicy(self.default, {**self.per_asset, asset: depth})

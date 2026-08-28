@@ -9,7 +9,7 @@ from .models import (
 )
 from .policy import ConfirmationPolicy, DepthSpec
 from .source import ChainSource
-from .watcher import DepositWatcher
+from .watcher import DepositWatcher, PollResult
 
 __version__ = "0.1.0"
 
@@ -21,6 +21,7 @@ __all__ = [
     "DepositWatcher",
     "DepthSpec",
     "InvalidTransfer",
+    "PollResult",
     "Transfer",
     "confirmations_for",
     "__version__",
