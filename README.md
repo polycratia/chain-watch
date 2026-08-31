@@ -78,6 +78,49 @@ This makes one demand on the chain source: `transfers()` must describe the
 current best chain, so a transfer it stops returning is a transfer the chain
 no longer has.
 
+## Exactly-once notification
+
+The dedup key is `DepositKey`, the `(tx_id, output_index)` pair naming the
+transaction output a payment landed on. It says what was paid, not where it was
+mined, so it holds across polls, duplicated blocks, restarts and reorgs. Every
+deposit carries it as `deposit.key`, which is also the key to deduplicate on
+downstream. The watcher guarantees:
+
+- a transfer the source returns on every poll is confirmed once;
+- a source that replays a range it already served changes nothing;
+- a key that was reverted may confirm again, but only after the revert was
+  reported, so credits and withdrawals always alternate;
+- a key below the reorg window is settled: never reverted, never reported
+  again, whatever the source says afterwards.
+
+Memory is not a guarantee, so the bookkeeping is a value you can persist and
+hand back after a restart:
+
+```python
+import json
+from chain_watch import DepositWatcher, WatcherState
+
+state = WatcherState.from_dict(json.loads(snapshot.read_text()))
+watcher = DepositWatcher(source, ["addr-1"], policy=3, state=state)
+
+result = watcher.poll()
+notify(result)
+snapshot.write_text(json.dumps(watcher.state.to_dict()))
+```
+
+`state` and `start_height` are mutually exclusive: a snapshot carries its own
+starting point. `to_dict()` is JSON-ready, with amounts as strings so no
+decimal is rounded on the way out and back.
+
+Where the snapshot is written decides what the whole pipeline delivers. Storing
+it in the same transaction as the notification gives exactly once; storing it
+after gives at least once, because a crash in between replays the poll; storing
+it before gives at most once, because the same crash drops the notification.
+
+Settled keys are kept for the lifetime of the state, which is what makes a
+replay from height zero safe, and what makes the snapshot grow with the number
+of deposits ever seen.
+
 ## Development
 
 ```bash

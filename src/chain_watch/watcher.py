@@ -5,9 +5,10 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from .models import Deposit, Transfer, confirmations_for
+from .models import Deposit, DepositKey, Transfer, confirmations_for
 from .policy import ConfirmationPolicy, DepthSpec
 from .source import ChainSource
+from .state import WatcherState
 
 __all__ = ["DepositWatcher", "PollResult"]
 
@@ -38,6 +39,12 @@ class DepositWatcher:
     as ``reverted`` and the caller can withdraw the credit. A transfer that is
     mined again is held from scratch and confirms a second time. Below the
     window a deposit is final: never reverted, never reported twice.
+
+    Identity is the transfer's ``DepositKey``, the ``(tx_id, output_index)``
+    pair, so duplicated blocks and sources that replay ranges they already
+    served change nothing. Memory alone would lose that across a restart, so
+    the bookkeeping is available as :attr:`state` and can be handed back to the
+    constructor to resume where the previous process stopped.
     """
 
     def __init__(
@@ -48,11 +55,16 @@ class DepositWatcher:
         policy: DepthSpec = 1,
         start_height: int = 0,
         reorg_depth: int | None = None,
+        state: WatcherState | None = None,
     ) -> None:
         watched = {address.strip() for address in addresses}
         watched.discard("")
         if not watched:
             raise ValueError("at least one address is required")
+        if state is not None:
+            if start_height:
+                raise ValueError("pass either start_height or state, not both")
+            start_height = state.start_height
         if start_height < 0:
             raise ValueError(f"start_height must not be negative: {start_height}")
 
@@ -66,9 +78,13 @@ class DepositWatcher:
         self._addresses = watched
         self._reorg_depth = reorg_depth
         self._start_height = start_height
-        self._pending: dict[tuple[str, int], Transfer] = {}
-        self._reported: dict[tuple[str, int], Deposit] = {}
-        self._settled: set[tuple[str, int]] = set()
+        self._pending: dict[DepositKey, Transfer] = {}
+        self._reported: dict[DepositKey, Deposit] = {}
+        self._settled: set[DepositKey] = set()
+        if state is not None:
+            self._pending.update((t.key, t) for t in state.pending)
+            self._reported.update((d.key, d) for d in state.reported)
+            self._settled.update(state.settled)
 
     @property
     def addresses(self) -> frozenset[str]:
@@ -98,13 +114,28 @@ class DepositWatcher:
             )
         )
 
+    @property
+    def settled(self) -> frozenset[DepositKey]:
+        """Keys that were notified and are now below the reorg window."""
+        return frozenset(self._settled)
+
+    @property
+    def state(self) -> WatcherState:
+        """A snapshot that resumes the watcher without notifying twice."""
+        return WatcherState(
+            start_height=self._start_height,
+            pending=self.pending,
+            reported=self.revertible,
+            settled=tuple(sorted(self._settled)),
+        )
+
     def poll(self) -> PollResult:
         """Fetch from the source and report what confirmed and what vanished."""
         tip = self._source.tip()
         floor = max(self._start_height, tip.height - self._reorg_depth + 1)
         addresses = sorted(self._addresses)
 
-        seen: dict[tuple[str, int], Transfer] = {}
+        seen: dict[DepositKey, Transfer] = {}
         for transfer in self._source.transfers(
             addresses=addresses, since_height=floor
         ):

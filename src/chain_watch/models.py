@@ -3,6 +3,10 @@
 A :class:`Transfer` is what a chain source sees; a :class:`Deposit` is what the
 watcher reports once a transfer is buried deep enough. Both are immutable and
 carry no persistence concerns: the caller decides where they end up.
+
+A ``DepositKey`` is the ``(tx_id, output_index)`` pair naming the transaction
+output a payment landed on. It is the identity the watcher deduplicates by, and
+it is stable across polls, restarts and reorgs.
 """
 
 from __future__ import annotations
@@ -13,10 +17,13 @@ from decimal import Decimal
 __all__ = [
     "InvalidTransfer",
     "BlockRef",
+    "DepositKey",
     "Transfer",
     "Deposit",
     "confirmations_for",
 ]
+
+DepositKey = tuple[str, int]
 
 
 class InvalidTransfer(ValueError):
@@ -86,8 +93,12 @@ class Transfer:
         object.__setattr__(self, "amount", _as_amount(self.amount))
 
     @property
-    def key(self) -> tuple[str, int]:
-        """Identity of the payment on the chain, stable across polls."""
+    def key(self) -> DepositKey:
+        """Identity of the payment on the chain, stable across polls.
+
+        It names what was paid rather than where it was mined, so a block that
+        is replaced, replayed or served twice yields the same key.
+        """
         return (self.tx_id, self.output_index)
 
 
@@ -105,7 +116,7 @@ class Deposit:
             )
 
     @property
-    def key(self) -> tuple[str, int]:
+    def key(self) -> DepositKey:
         return self.transfer.key
 
     @property
