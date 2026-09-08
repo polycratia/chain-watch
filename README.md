@@ -126,8 +126,13 @@ of deposits ever seen.
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e .
+pip install -e ".[dev]"
+python -m pytest
 ```
+
+The suite runs against a scripted chain (`tests/scripted_chain.py`) that mines,
+stalls, forks and rolls back on demand, so every transition the watcher knows
+is driven by a chain misbehaving rather than by a mock.
 
 ## License
 
