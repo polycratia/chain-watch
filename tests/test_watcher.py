@@ -113,7 +113,7 @@ def test_transfers_to_unwatched_addresses_are_dropped():
     assert keys(result.confirmed) == [("tx-a", 0)]
 
 
-def test_every_poll_re_reads_the_reorg_window():
+def test_the_first_poll_reads_the_reorg_window():
     chain = ScriptedChain()
     watcher = DepositWatcher(chain, ["addr-1"], policy=1, reorg_depth=4)
     chain.mine(count=10)
@@ -121,6 +121,55 @@ def test_every_poll_re_reads_the_reorg_window():
     watcher.poll()
 
     assert chain.last_query == (("addr-1",), 7)
+    assert watcher.last_tip == 10
+
+
+def test_a_poller_asleep_past_the_window_still_confirms_what_was_mined():
+    chain = ScriptedChain()
+    watcher = DepositWatcher(chain, ["addr-1"], policy=2, reorg_depth=2)
+    assert not watcher.poll()
+
+    chain.mine(pay("tx-a"))
+    chain.mine(count=5)
+    result = watcher.poll()
+
+    assert chain.last_query == (("addr-1",), 1)
+    assert keys(result.confirmed) == [("tx-a", 0)]
+    assert result.confirmed[0].confirmations == 6
+    assert result.confirmed[0].block == chain.block_at(1)
+    assert ("tx-a", 0) in watcher.settled
+
+
+def test_the_read_reaches_back_to_the_oldest_pending_transfer():
+    chain = ScriptedChain()
+    watcher = DepositWatcher(chain, ["addr-1"], policy=4, reorg_depth=1)
+    chain.mine(pay("tx-a"))
+    assert not watcher.poll()
+
+    chain.mine(count=2)
+    assert not watcher.poll()
+    assert chain.last_query == (("addr-1",), 1)
+
+    chain.mine()
+    result = watcher.poll()
+
+    assert chain.last_query == (("addr-1",), 1)
+    assert keys(result.confirmed) == [("tx-a", 0)]
+    assert result.confirmed[0].confirmations == 4
+
+
+def test_a_pending_transfer_below_the_window_is_dropped_not_confirmed():
+    chain = ScriptedChain()
+    watcher = DepositWatcher(chain, ["addr-1"], policy=4, reorg_depth=1)
+    chain.mine(pay("tx-a"))
+    assert not watcher.poll()
+    assert keys(watcher.pending) == [("tx-a", 0)]
+
+    chain.fork(1, length=5)
+    result = watcher.poll()
+
+    assert not result
+    assert watcher.pending == ()
 
 
 def test_start_height_keeps_the_watcher_off_older_blocks():
@@ -276,6 +325,31 @@ def test_a_snapshot_resumes_the_watcher_without_notifying_twice():
     assert keys(result.confirmed) == [("tx-c", 0)]
     assert str(result.confirmed[0].amount) == "0.10000000"
     assert result.reverted == ()
+
+
+def test_a_snapshot_carries_the_last_polled_tip():
+    chain = ScriptedChain()
+    watcher = DepositWatcher(chain, ["addr-1"], policy=2, reorg_depth=2)
+    chain.mine(count=3)
+    assert not watcher.poll()
+
+    snapshot = json.loads(json.dumps(watcher.state.to_dict()))
+    assert snapshot["last_tip"] == 3
+
+    chain.mine(pay("tx-a"))
+    chain.mine(count=4)
+    resumed = DepositWatcher(
+        chain,
+        ["addr-1"],
+        policy=2,
+        reorg_depth=2,
+        state=WatcherState.from_dict(snapshot),
+    )
+    result = resumed.poll()
+
+    assert chain.last_query == (("addr-1",), 4)
+    assert keys(result.confirmed) == [("tx-a", 0)]
+    assert result.confirmed[0].block == chain.block_at(4)
 
 
 def test_a_snapshot_taken_mid_reorg_still_hands_the_deposit_back():

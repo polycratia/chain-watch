@@ -27,11 +27,17 @@ class PollResult:
 class DepositWatcher:
     """Turn raw transfers from a chain source into deposits.
 
-    Each :meth:`poll` re-reads the last ``reorg_depth`` blocks from the source
-    and holds every transfer it finds until it reaches the depth the policy
+    Each :meth:`poll` re-reads the bottom of the chain from the source and
+    holds every transfer it finds until it reaches the depth the policy
     requires for its asset. The transition from seen to confirmed happens once:
     a transfer that was already reported is never reported again, even if the
     source keeps returning it.
+
+    The read starts at the lowest of the reorg window floor, the block after
+    the last tip this watcher polled, and the block of the oldest pending
+    transfer, so a poller that slept through more than ``reorg_depth`` blocks
+    still sees what was mined while it was away, and a transfer waiting for a
+    depth deeper than the window is re-read rather than matured from memory.
 
     A chain can also take blocks back. While a deposit is still inside the
     reorg window, its block is checked against what the source reports now; if
@@ -78,10 +84,12 @@ class DepositWatcher:
         self._addresses = watched
         self._reorg_depth = reorg_depth
         self._start_height = start_height
+        self._last_tip: int | None = None
         self._pending: dict[DepositKey, Transfer] = {}
         self._reported: dict[DepositKey, Deposit] = {}
         self._settled: set[DepositKey] = set()
         if state is not None:
+            self._last_tip = state.last_tip
             self._pending.update((t.key, t) for t in state.pending)
             self._reported.update((d.key, d) for d in state.reported)
             self._settled.update(state.settled)
@@ -96,8 +104,13 @@ class DepositWatcher:
 
     @property
     def reorg_depth(self) -> int:
-        """How many blocks below the tip are re-read on every poll."""
+        """How many blocks below the tip stay revertible."""
         return self._reorg_depth
+
+    @property
+    def last_tip(self) -> int | None:
+        """Height of the tip the last poll saw, or ``None`` before the first."""
+        return self._last_tip
 
     @property
     def pending(self) -> tuple[Transfer, ...]:
@@ -127,7 +140,16 @@ class DepositWatcher:
             pending=self.pending,
             reported=self.revertible,
             settled=tuple(sorted(self._settled)),
+            last_tip=self._last_tip,
         )
+
+    def _read_floor(self, floor: int) -> int:
+        since = floor
+        if self._last_tip is not None:
+            since = min(since, self._last_tip + 1)
+        for transfer in self._pending.values():
+            since = min(since, transfer.block.height)
+        return max(self._start_height, since)
 
     def poll(self) -> PollResult:
         """Fetch from the source and report what confirmed and what vanished."""
@@ -137,15 +159,16 @@ class DepositWatcher:
 
         seen: dict[DepositKey, Transfer] = {}
         for transfer in self._source.transfers(
-            addresses=addresses, since_height=floor
+            addresses=addresses, since_height=self._read_floor(floor)
         ):
             if transfer.address not in self._addresses:
                 continue
             seen[transfer.key] = transfer
 
-        for key, transfer in list(self._pending.items()):
-            if transfer.block.height >= floor and key not in seen:
-                del self._pending[key]
+        # The read reaches below every pending block, so a key the answer no
+        # longer holds is a key the chain dropped.
+        for key in [key for key in self._pending if key not in seen]:
+            del self._pending[key]
 
         reverted: list[Deposit] = []
         for key, deposit in list(self._reported.items()):
@@ -176,6 +199,7 @@ class DepositWatcher:
                 del self._reported[key]
                 self._settled.add(key)
 
+        self._last_tip = tip.height
         confirmed.sort(key=lambda deposit: _transfer_order(deposit.transfer))
         reverted.sort(key=lambda deposit: _transfer_order(deposit.transfer))
         return PollResult(tuple(confirmed), tuple(reverted))

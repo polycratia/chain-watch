@@ -16,7 +16,7 @@ from .models import BlockRef, Deposit, DepositKey, InvalidTransfer, Transfer
 
 __all__ = ["STATE_VERSION", "InvalidState", "WatcherState"]
 
-STATE_VERSION = 1
+STATE_VERSION = 2
 
 
 class InvalidState(ValueError):
@@ -123,18 +123,24 @@ class WatcherState:
     ``settled`` are the keys of deposits buried below it: final, never reverted
     and never notified again. ``settled`` only grows, which is what the
     guarantee costs.
+
+    ``last_tip`` is the height of the tip the last poll saw, or ``None`` before
+    the first one. It is what lets a resumed watcher read from the block after
+    the one it stopped at, however far the chain moved on in the meantime.
     """
 
     start_height: int = 0
     pending: tuple[Transfer, ...] = ()
     reported: tuple[Deposit, ...] = ()
     settled: tuple[DepositKey, ...] = ()
+    last_tip: int | None = None
 
     def to_dict(self) -> dict[str, object]:
         """Render the state as JSON-ready data; amounts become strings."""
         return {
             "version": STATE_VERSION,
             "start_height": self.start_height,
+            "last_tip": self.last_tip,
             "pending": [_transfer_to_dict(transfer) for transfer in self.pending],
             "reported": [_deposit_to_dict(deposit) for deposit in self.reported],
             "settled": [[tx_id, index] for tx_id, index in self.settled],
@@ -147,6 +153,7 @@ class WatcherState:
         version = _as_int(_field(payload, "version", "state"), "version")
         if version != STATE_VERSION:
             raise InvalidState(f"unsupported state version: {version}")
+        last_tip = _field(payload, "last_tip", "state")
         try:
             return cls(
                 start_height=_as_int(
@@ -170,6 +177,7 @@ class WatcherState:
                         _field(payload, "settled", "state"), "settled"
                     )
                 ),
+                last_tip=None if last_tip is None else _as_int(last_tip, "last_tip"),
             )
         except InvalidTransfer as exc:
             raise InvalidState(f"snapshot holds unusable data: {exc}") from exc

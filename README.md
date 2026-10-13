@@ -120,9 +120,8 @@ Blocks disappear. Every poll re-reads the bottom of the chain and compares it
 with what the watcher saw last time.
 
 The window is the last `reorg_depth` blocks below the tip. Its floor is
-`tip.height - reorg_depth + 1`, never below `start_height`, and that floor is
-exactly the `since_height` the source is asked for. Everything at or above it
-is provisional; everything below it is history.
+`tip.height - reorg_depth + 1`, never below `start_height`. Everything at or
+above it is provisional; everything below it is history.
 
 ```python
 watcher = DepositWatcher(source, ["addr-1"], policy=3, reorg_depth=20)
@@ -168,6 +167,32 @@ Three properties expose the window at any moment: `watcher.pending` (seen, not
 deep enough), `watcher.revertible` (reported, still inside the window) and
 `watcher.settled` (keys below it).
 
+## How far back a poll reads
+
+The window decides what is still revertible. It does not decide where the read
+starts, because a poller is not guaranteed to run once per block: a process
+that was asleep, throttled or restarted from an older snapshot can wake up to a
+tip far above the window floor, with every block it never read in between.
+Asking only for the window would skip them, and a deposit mined in the gap
+would never be seen at all.
+
+So `since_height` is the lowest of three heights, and never below
+`start_height`:
+
+- the window floor, `tip.height - reorg_depth + 1`, which is what the revert
+  check needs;
+- the last tip this watcher polled, plus one — the first block it has not read
+  yet, which is what closes the gap a sleeping poller opens;
+- the block of the oldest transfer still pending, so a transfer waiting for a
+  depth deeper than `reorg_depth` is re-read on every poll.
+
+One rule falls out of that, and it is the point of the arrangement: every
+transfer the watcher still holds an opinion about sits inside the range it just
+read. A pending transfer the answer no longer holds is therefore dropped,
+however deep its block was — nothing matures on a memory the chain was never
+asked to confirm. `watcher.last_tip` is the height the last poll saw, or `None`
+before the first one.
+
 ## Exactly-once notification
 
 The dedup key is `DepositKey`, the `(tx_id, output_index)` pair. Because it
@@ -204,10 +229,12 @@ snapshot.write_text(json.dumps(watcher.state.to_dict()))
 
 `state` and `start_height` are mutually exclusive: a snapshot carries its own
 starting point, and passing both is refused rather than resolved by guessing.
-`to_dict()` is JSON-ready, with amounts as strings so no decimal is rounded on
-the way out and back; `from_dict()` checks the version and raises
-`InvalidState` on anything it cannot read, instead of resuming from a snapshot
-it half understood.
+It also carries the last tip it polled, so a watcher resumed from an old
+snapshot reads from the block after the one it stopped at, however far the
+chain moved on while the process was down. `to_dict()` is JSON-ready, with
+amounts as strings so no decimal is rounded on the way out and back;
+`from_dict()` checks the version and raises `InvalidState` on anything it
+cannot read, instead of resuming from a snapshot it half understood.
 
 Where the snapshot is written decides what the whole pipeline delivers:
 
