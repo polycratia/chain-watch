@@ -251,9 +251,41 @@ def test_a_transfer_mined_again_is_reverted_and_confirmed_from_scratch():
 
     assert keys(result.reverted) == [("tx-a", 0)]
     assert result.reverted[0].block == original
-    assert keys(result.confirmed) == [("tx-a", 0)]
-    assert result.confirmed[0].block == chain.block_at(1)
-    assert result.confirmed[0].block != original
+    assert result.confirmed == ()
+    assert keys(watcher.pending) == [("tx-a", 0)]
+
+    again = watcher.poll()
+
+    assert again.reverted == ()
+    assert keys(again.confirmed) == [("tx-a", 0)]
+    assert again.confirmed[0].block == chain.block_at(1)
+    assert again.confirmed[0].block != original
+    assert again.confirmed[0].confirmations == 2
+    assert not watcher.poll()
+
+
+def test_a_revert_and_a_re_credit_of_one_key_never_share_a_poll():
+    chain = ScriptedChain()
+    watcher = DepositWatcher(chain, ["addr-1"], policy=1, reorg_depth=4)
+    original = chain.mine(pay("tx-a"))
+    assert keys(watcher.poll().confirmed) == [("tx-a", 0)]
+
+    replacement = chain.fork(1, pay("tx-a"))
+    reorg = watcher.poll()
+
+    assert keys(reorg.reverted) == [("tx-a", 0)]
+    assert reorg.reverted[0].block == original
+    assert reorg.confirmed == ()
+    assert keys(watcher.pending) == [("tx-a", 0)]
+    assert watcher.revertible == ()
+
+    chain.stall()
+    credit = watcher.poll()
+
+    assert credit.reverted == ()
+    assert keys(credit.confirmed) == [("tx-a", 0)]
+    assert credit.confirmed[0].block == replacement
+    assert credit.confirmed[0].confirmations == 1
     assert not watcher.poll()
 
 

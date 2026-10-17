@@ -43,8 +43,10 @@ class DepositWatcher:
     reorg window, its block is checked against what the source reports now; if
     the block is gone, or the transfer moved elsewhere, the deposit comes back
     as ``reverted`` and the caller can withdraw the credit. A transfer that is
-    mined again is held from scratch and confirms a second time. Below the
-    window a deposit is final: never reverted, never reported twice.
+    mined again is held from scratch and confirms a second time, but never in
+    the poll that reverted it: credits and withdrawals of one key strictly
+    alternate across polls. Below the window a deposit is final: never
+    reverted, never reported twice.
 
     Identity is the transfer's ``DepositKey``, the ``(tx_id, output_index)``
     pair, so duplicated blocks and sources that replay ranges they already
@@ -184,8 +186,16 @@ class DepositWatcher:
             if key not in self._reported and key not in self._settled:
                 self._pending[key] = transfer
 
+        # A key reverted here waits in pending until the next poll: a
+        # withdrawal and the credit that replaces it must never arrive
+        # together, or a caller applying the result in order would end up
+        # crediting a key it is about to take back.
+        held = {deposit.key for deposit in reverted}
+
         confirmed: list[Deposit] = []
         for key, transfer in list(self._pending.items()):
+            if key in held:
+                continue
             confirmations = confirmations_for(transfer.block, tip)
             if not self._policy.is_confirmed(transfer.asset, confirmations):
                 continue

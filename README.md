@@ -127,10 +127,10 @@ above it is provisional; everything below it is history.
 watcher = DepositWatcher(source, ["addr-1"], policy=3, reorg_depth=20)
 
 result = watcher.poll()
-for deposit in result.confirmed:
-    credit(deposit)
 for deposit in result.reverted:
     withdraw(deposit)
+for deposit in result.confirmed:
+    credit(deposit)
 ```
 
 Inside the window, three rules:
@@ -140,7 +140,14 @@ Inside the window, three rules:
 - a reported deposit whose block is gone, or whose transfer turned up in a
   different block, comes back in `reverted` so the credit can be withdrawn;
 - a transfer that is mined again is held from scratch and confirms a second
-  time, on the new block, with a fresh confirmation count.
+  time, on the new block, with a fresh confirmation count — but in a later
+  poll than the one that reverted it, never in the same result.
+
+That last clause is what keeps a replacement block readable: a transfer
+re-mined by the very reorg that dropped it would otherwise land in `reverted`
+and in `confirmed` of one poll, and the two entries would describe the same
+key. Holding it to the next poll makes credits and withdrawals of a key
+strictly alternate, whatever order the caller applies a result in.
 
 Below the window a deposit is settled: never reverted, never reported again,
 whatever the source says afterwards. That is the whole point of the number —
@@ -190,8 +197,10 @@ One rule falls out of that, and it is the point of the arrangement: every
 transfer the watcher still holds an opinion about sits inside the range it just
 read. A pending transfer the answer no longer holds is therefore dropped,
 however deep its block was — nothing matures on a memory the chain was never
-asked to confirm. `watcher.last_tip` is the height the last poll saw, or `None`
-before the first one.
+asked to confirm. A transfer held back by a revert is pending too, so the poll
+that credits it reads its block again rather than trusting the one it was
+handed. `watcher.last_tip` is the height the last poll saw, or `None` before
+the first one.
 
 ## Exactly-once notification
 
@@ -205,8 +214,9 @@ The watcher guarantees:
 
 - a transfer the source returns on every poll is confirmed once;
 - a source that replays a range it already served changes nothing;
-- a key that was reverted may confirm again, but only after the revert was
-  reported, so credits and withdrawals always alternate;
+- a key that was reverted may confirm again, but never in the poll that
+  reported the revert, so credits and withdrawals of a key strictly alternate
+  across polls;
 - a key below the reorg window is settled: never reverted, never reported
   again, whatever the source says afterwards.
 
