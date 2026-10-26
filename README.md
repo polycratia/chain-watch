@@ -75,6 +75,13 @@ Addresses are matched exactly after stripping surrounding whitespace, and a
 source that answers with more than it was asked for is filtered: a transfer to
 an address you are not watching is dropped rather than credited.
 
+The watched set may shrink between runs. A watcher resumed with an address
+removed still asks the source about every address holding a pending or
+revertible entry, so those entries confirm or settle on their own terms instead
+of reverting for want of an answer. A payment arriving on a retired address is
+still not credited, and once its last entry settles the address drops out of
+the query.
+
 ## The depth policy
 
 How deep is deep enough is the caller's call, and it differs per asset. A chain
@@ -195,12 +202,12 @@ So `since_height` is the lowest of three heights, and never below
 
 One rule falls out of that, and it is the point of the arrangement: every
 transfer the watcher still holds an opinion about sits inside the range it just
-read. A pending transfer the answer no longer holds is therefore dropped,
-however deep its block was — nothing matures on a memory the chain was never
-asked to confirm. A transfer held back by a revert is pending too, so the poll
-that credits it reads its block again rather than trusting the one it was
-handed. `watcher.last_tip` is the height the last poll saw, or `None` before
-the first one.
+read, on an address it just asked about. A pending transfer the answer no
+longer holds is therefore dropped, however deep its block was — nothing matures
+on a memory the chain was never asked to confirm. A transfer held back by a
+revert is pending too, so the poll that credits it reads its block again rather
+than trusting the one it was handed. `watcher.last_tip` is the height the last
+poll saw, or `None` before the first one.
 
 ## Exactly-once notification
 

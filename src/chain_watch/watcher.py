@@ -38,6 +38,11 @@ class DepositWatcher:
     transfer, so a poller that slept through more than ``reorg_depth`` blocks
     still sees what was mined while it was away, and a transfer waiting for a
     depth deeper than the window is re-read rather than matured from memory.
+    The query carries the watched addresses plus every address still holding a
+    pending or revertible entry, so an address dropped from the watched set is
+    followed until its entries settle instead of losing them to an answer that
+    was never asked about it. Payments arriving on such an address are not
+    credited; only the entries already held are followed.
 
     A chain can also take blocks back. While a deposit is still inside the
     reorg window, its block is checked against what the source reports now; if
@@ -153,22 +158,31 @@ class DepositWatcher:
             since = min(since, transfer.block.height)
         return max(self._start_height, since)
 
+    def _query_addresses(self) -> list[str]:
+        # An entry on an address no longer watched would be reverted by the
+        # silence of a source that was never asked about it.
+        asked = set(self._addresses)
+        asked.update(transfer.address for transfer in self._pending.values())
+        asked.update(deposit.address for deposit in self._reported.values())
+        return sorted(asked)
+
     def poll(self) -> PollResult:
         """Fetch from the source and report what confirmed and what vanished."""
         tip = self._source.tip()
         floor = max(self._start_height, tip.height - self._reorg_depth + 1)
-        addresses = sorted(self._addresses)
+        held_keys = set(self._pending) | set(self._reported)
 
         seen: dict[DepositKey, Transfer] = {}
         for transfer in self._source.transfers(
-            addresses=addresses, since_height=self._read_floor(floor)
+            addresses=self._query_addresses(), since_height=self._read_floor(floor)
         ):
-            if transfer.address not in self._addresses:
+            if transfer.address not in self._addresses and transfer.key not in held_keys:
                 continue
             seen[transfer.key] = transfer
 
-        # The read reaches below every pending block, so a key the answer no
-        # longer holds is a key the chain dropped.
+        # The read reaches below every pending block and covers every address
+        # holding one, so a key the answer no longer holds is a key the chain
+        # dropped.
         for key in [key for key in self._pending if key not in seen]:
             del self._pending[key]
 

@@ -321,6 +321,65 @@ def test_a_deposit_below_the_window_survives_a_deeper_reorg():
     assert ("tx-a", 0) in watcher.settled
 
 
+def test_a_retired_address_keeps_its_revertible_deposit():
+    chain = ScriptedChain()
+    watcher = DepositWatcher(chain, ["addr-1", "addr-2"], policy=1, reorg_depth=5)
+    block = chain.mine(pay("tx-a", address="addr-2"))
+    assert keys(watcher.poll().confirmed) == [("tx-a", 0)]
+
+    snapshot = json.loads(json.dumps(watcher.state.to_dict()))
+    resumed = DepositWatcher(
+        chain,
+        ["addr-1"],
+        policy=1,
+        reorg_depth=5,
+        state=WatcherState.from_dict(snapshot),
+    )
+
+    chain.mine()
+    result = resumed.poll()
+
+    assert chain.last_query == (("addr-1", "addr-2"), 0)
+    assert not result
+    assert keys(resumed.revertible) == [("tx-a", 0)]
+    assert resumed.revertible[0].block == block
+
+    chain.mine(count=4)
+    assert not resumed.poll()
+    assert ("tx-a", 0) in resumed.settled
+
+    chain.mine(pay("tx-b", address="addr-2"))
+    assert not resumed.poll()
+    assert chain.last_query[0] == ("addr-1",)
+    assert resumed.pending == ()
+
+
+def test_a_retired_address_still_confirms_what_was_pending_on_it():
+    chain = ScriptedChain()
+    watcher = DepositWatcher(chain, ["addr-1", "addr-2"], policy=3, reorg_depth=3)
+    block = chain.mine(pay("tx-a", address="addr-2"))
+    assert not watcher.poll()
+    assert keys(watcher.pending) == [("tx-a", 0)]
+
+    snapshot = json.loads(json.dumps(watcher.state.to_dict()))
+    resumed = DepositWatcher(
+        chain,
+        ["addr-1"],
+        policy=3,
+        reorg_depth=3,
+        state=WatcherState.from_dict(snapshot),
+    )
+
+    chain.mine(count=2)
+    result = resumed.poll()
+
+    assert chain.last_query == (("addr-1", "addr-2"), 1)
+    assert result.reverted == ()
+    assert keys(result.confirmed) == [("tx-a", 0)]
+    assert result.confirmed[0].confirmations == 3
+    assert result.confirmed[0].block == block
+
+
 def test_a_snapshot_resumes_the_watcher_without_notifying_twice():
     chain = ScriptedChain()
     watcher = DepositWatcher(chain, ["addr-1"], policy=2, reorg_depth=3)
