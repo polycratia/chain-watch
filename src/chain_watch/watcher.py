@@ -38,6 +38,8 @@ class DepositWatcher:
     transfer, so a poller that slept through more than ``reorg_depth`` blocks
     still sees what was mined while it was away, and a transfer waiting for a
     depth deeper than the window is re-read rather than matured from memory.
+    That height is kept as :attr:`last_since_height`, so a caller can see how
+    far back a poll actually reached rather than deriving it from the window.
     The query carries the watched addresses plus every address still holding a
     pending or revertible entry, so an address dropped from the watched set is
     followed until its entries settle instead of losing them to an answer that
@@ -92,6 +94,7 @@ class DepositWatcher:
         self._reorg_depth = reorg_depth
         self._start_height = start_height
         self._last_tip: int | None = None
+        self._last_since_height: int | None = None
         self._pending: dict[DepositKey, Transfer] = {}
         self._reported: dict[DepositKey, Deposit] = {}
         self._settled: set[DepositKey] = set()
@@ -118,6 +121,11 @@ class DepositWatcher:
     def last_tip(self) -> int | None:
         """Height of the tip the last poll saw, or ``None`` before the first."""
         return self._last_tip
+
+    @property
+    def last_since_height(self) -> int | None:
+        """Height the last poll read from, or ``None`` before the first."""
+        return self._last_since_height
 
     @property
     def pending(self) -> tuple[Transfer, ...]:
@@ -170,11 +178,13 @@ class DepositWatcher:
         """Fetch from the source and report what confirmed and what vanished."""
         tip = self._source.tip()
         floor = max(self._start_height, tip.height - self._reorg_depth + 1)
+        since_height = self._read_floor(floor)
+        self._last_since_height = since_height
         held_keys = set(self._pending) | set(self._reported)
 
         seen: dict[DepositKey, Transfer] = {}
         for transfer in self._source.transfers(
-            addresses=self._query_addresses(), since_height=self._read_floor(floor)
+            addresses=self._query_addresses(), since_height=since_height
         ):
             if transfer.address not in self._addresses and transfer.key not in held_keys:
                 continue

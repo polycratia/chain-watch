@@ -207,7 +207,8 @@ longer holds is therefore dropped, however deep its block was — nothing mature
 on a memory the chain was never asked to confirm. A transfer held back by a
 revert is pending too, so the poll that credits it reads its block again rather
 than trusting the one it was handed. `watcher.last_tip` is the height the last
-poll saw, or `None` before the first one.
+poll saw, and `watcher.last_since_height` is the height it read from — both
+`None` before the first poll.
 
 ## Exactly-once notification
 

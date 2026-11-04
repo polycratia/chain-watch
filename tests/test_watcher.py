@@ -158,6 +158,27 @@ def test_the_read_reaches_back_to_the_oldest_pending_transfer():
     assert result.confirmed[0].confirmations == 4
 
 
+def test_the_watcher_reports_where_the_last_poll_started_reading():
+    chain = ScriptedChain()
+    watcher = DepositWatcher(chain, ["addr-1"], policy=4, reorg_depth=2)
+    assert watcher.last_since_height is None
+
+    chain.mine(count=6)
+    assert not watcher.poll()
+    assert watcher.last_since_height == 5
+    assert chain.last_query == (("addr-1",), 5)
+
+    chain.mine(pay("tx-a"))
+    assert not watcher.poll()
+    assert watcher.last_since_height == 6
+    assert keys(watcher.pending) == [("tx-a", 0)]
+
+    chain.mine(count=2)
+    assert not watcher.poll()
+    assert watcher.last_since_height == 7
+    assert chain.last_query == (("addr-1",), 7)
+
+
 def test_a_pending_transfer_below_the_window_is_dropped_not_confirmed():
     chain = ScriptedChain()
     watcher = DepositWatcher(chain, ["addr-1"], policy=4, reorg_depth=1)
