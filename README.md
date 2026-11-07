@@ -253,12 +253,15 @@ snapshot.write_text(json.dumps(watcher.state.to_dict()))
 
 `state` and `start_height` are mutually exclusive: a snapshot carries its own
 starting point, and passing both is refused rather than resolved by guessing.
-It also carries the last tip it polled, so a watcher resumed from an old
-snapshot reads from the block after the one it stopped at, however far the
-chain moved on while the process was down. `to_dict()` is JSON-ready, with
-amounts as strings so no decimal is rounded on the way out and back;
-`from_dict()` checks the version and raises `InvalidState` on anything it
-cannot read, instead of resuming from a snapshot it half understood.
+Zero is the default, so a `start_height=0` beside a state is indistinguishable
+from one that was never passed: it is accepted, and the snapshot's own starting
+point is adopted rather than dropped to zero. The snapshot also carries the
+last tip it polled, so a watcher resumed from an old one reads from the block
+after the one it stopped at, however far the chain moved on while the process
+was down. `to_dict()` is JSON-ready, with amounts as strings so no decimal is
+rounded on the way out and back; `from_dict()` checks the version and raises
+`InvalidState` on anything it cannot read, instead of resuming from a snapshot
+it half understood.
 
 Where the snapshot is written decides what the whole pipeline delivers:
 

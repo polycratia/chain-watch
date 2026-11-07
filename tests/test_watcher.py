@@ -550,6 +550,27 @@ def test_a_snapshot_taken_mid_reorg_still_hands_the_deposit_back():
     assert result.reverted[0].block == original
 
 
+def test_a_zero_start_height_beside_a_state_adopts_the_snapshot():
+    chain = ScriptedChain()
+    chain.mine(pay("tx-old"))
+    chain.mine()
+    watcher = DepositWatcher(
+        chain,
+        ["addr-1"],
+        policy=1,
+        start_height=0,
+        reorg_depth=10,
+        state=WatcherState(start_height=2),
+    )
+    chain.mine(pay("tx-new"))
+
+    result = watcher.poll()
+
+    assert watcher.state.start_height == 2
+    assert chain.last_query == (("addr-1",), 2)
+    assert keys(result.confirmed) == [("tx-new", 0)]
+
+
 def test_the_watcher_refuses_an_impossible_setup():
     chain = ScriptedChain()
 

@@ -72,6 +72,15 @@ class DepositWatcher:
         reorg_depth: int | None = None,
         state: WatcherState | None = None,
     ) -> None:
+        """Watch ``addresses`` on ``source``, resuming from ``state`` if given.
+
+        ``start_height`` and ``state`` are mutually exclusive, but zero is the
+        default: a ``start_height=0`` passed beside a state cannot be told
+        apart from one that was never passed, so it is not refused and the
+        snapshot's own ``start_height`` is adopted. Treating it as an explicit
+        floor instead would drop the floor of a resumed watcher to zero and
+        widen every read below the height the snapshot was taken from.
+        """
         watched = {address.strip() for address in addresses}
         watched.discard("")
         if not watched:
