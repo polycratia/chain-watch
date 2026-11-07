@@ -212,9 +212,61 @@ read, on an address it just asked about. A pending transfer the answer no
 longer holds is therefore dropped, however deep its block was — nothing matures
 on a memory the chain was never asked to confirm. A transfer held back by a
 revert is pending too, so the poll that credits it reads its block again rather
-than trusting the one it was handed. `watcher.last_tip` is the height the last
-poll saw, and `watcher.last_since_height` is the height it read from — both
-`None` before the first poll.
+than trusting the one it was handed.
+
+## Resume semantics
+
+A watcher is told where to begin in one of two ways, and they answer different
+questions. `start_height` is a floor the caller sets: no read ever goes below
+it, so a fresh watcher can be pointed at the part of the chain that concerns it
+and stay off everything mined before. `state=` restores a snapshot, which
+carries its own `start_height` along with the last tip it polled and
+everything it was still holding.
+
+| Passed | Where the watcher starts |
+| --- | --- |
+| neither | the reorg window below the current tip |
+| `start_height=5` | never below height 5 |
+| `state=snapshot` | the snapshot's own `start_height` |
+| `start_height=0, state=snapshot` | the snapshot's own `start_height` |
+| `start_height=5, state=snapshot` | `ValueError` |
+
+Passing both is refused rather than resolved by guessing, with one exception
+the signature forces: zero is the default, so a `start_height=0` beside a
+state cannot be told apart from one that was never passed. It is accepted and
+the snapshot's starting point is adopted. Reading it as an explicit floor
+instead would drop a resumed watcher to zero and widen every read below the
+height the snapshot was taken from.
+
+The read floor and the reorg window are different numbers answering different
+questions, and a resumed watcher is where they come apart. The window is
+always the last `reorg_depth` blocks below the tip; the read floor is wherever
+the poll has to start to see what it missed — the block after the snapshot's
+last tip, or the block of the oldest transfer still pending, whichever is
+lower. That is how a process that was down for an hour catches up. Reading
+deeper makes nothing revertible again: a block below the window floor is read
+and matched against what the watcher holds, but a key already settled stays
+settled, however often the source serves it afterwards.
+
+`watcher.last_since_height` is the height the last poll read from, and
+`watcher.last_tip` the height of the tip it saw. `None` from
+`last_since_height` says this process has not polled yet — not that a poll read
+without a floor. It belongs to the watcher object rather than to the
+bookkeeping, so a watcher resumed from a snapshot reports `None` until it
+polls, however far the chain moved on in the meantime; the first poll then
+reports a real height like any other. `last_tip` does survive the snapshot,
+which is what lets that first poll reach back to the block after the one the
+previous process stopped at.
+
+A restart can also replay a report you already have. A key still inside the
+reorg window when the snapshot was taken is still provisional: it can come
+back in `reverted`, and a transfer mined again confirms a second time. The
+second report is not a copy of the first. Its `block` may differ, because the
+replacement was mined elsewhere, and its `confirmations` are whatever the poll
+actually found — for a watcher catching up, usually deeper than the depth the
+policy asked for. So deduplicate on `deposit.key`, the `(tx_id, output_index)`
+pair, and never on the whole `Deposit`: two reports of one payment are two
+different values naming the same transaction output.
 
 ## Exactly-once notification
 
@@ -251,17 +303,11 @@ notify(result)
 snapshot.write_text(json.dumps(watcher.state.to_dict()))
 ```
 
-`state` and `start_height` are mutually exclusive: a snapshot carries its own
-starting point, and passing both is refused rather than resolved by guessing.
-Zero is the default, so a `start_height=0` beside a state is indistinguishable
-from one that was never passed: it is accepted, and the snapshot's own starting
-point is adopted rather than dropped to zero. The snapshot also carries the
-last tip it polled, so a watcher resumed from an old one reads from the block
-after the one it stopped at, however far the chain moved on while the process
-was down. `to_dict()` is JSON-ready, with amounts as strings so no decimal is
-rounded on the way out and back; `from_dict()` checks the version and raises
-`InvalidState` on anything it cannot read, instead of resuming from a snapshot
-it half understood.
+What a restored snapshot decides, and what it leaves to the next poll, is
+above under resume semantics. `to_dict()` is JSON-ready, with amounts as
+strings so no decimal is rounded on the way out and back; `from_dict()` checks
+the version and raises `InvalidState` on anything it cannot read, instead of
+resuming from a snapshot it half understood.
 
 Where the snapshot is written decides what the whole pipeline delivers:
 
