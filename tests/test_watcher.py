@@ -285,6 +285,25 @@ def test_a_transfer_mined_again_is_reverted_and_confirmed_from_scratch():
     assert not watcher.poll()
 
 
+def test_two_reports_of_one_key_differ_in_block_and_depth():
+    chain = ScriptedChain()
+    watcher = DepositWatcher(chain, ["addr-1"], policy=2, reorg_depth=6)
+    chain.mine(pay("tx-a"))
+    chain.mine()
+    first = watcher.poll().confirmed[0]
+
+    chain.fork(1, pay("tx-a"), length=2)
+    assert keys(watcher.poll().reverted) == [("tx-a", 0)]
+
+    chain.mine(count=3)
+    second = watcher.poll().confirmed[0]
+
+    assert second.key == first.key == ("tx-a", 0)
+    assert second.block != first.block
+    assert second.confirmations > first.confirmations
+    assert second != first
+
+
 def test_a_revert_and_a_re_credit_of_one_key_never_share_a_poll():
     chain = ScriptedChain()
     watcher = DepositWatcher(chain, ["addr-1"], policy=1, reorg_depth=4)

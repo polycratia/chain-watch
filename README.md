@@ -43,6 +43,12 @@ the payment landed on. It names *what* was paid, not *where* it was mined.
 **`Deposit`** is a transfer that reached the required depth, plus the
 `confirmations` it had when it was reported. It forwards the transfer's fields,
 so `deposit.address`, `deposit.amount` and `deposit.block` all work directly.
+Two reports of one payment need not be equal values: a key that was reverted
+and mined again is reported on its new `block`, and a poll that arrives late
+reports the `confirmations` it actually found rather than the depth the policy
+asked for. So match a report against what you already credited on
+`deposit.key`, the `(tx_id, output_index)` pair, never on the deposit as a
+whole.
 
 **`PollResult`** is what one poll changed: `confirmed` and `reverted`. It is
 falsy when both are empty, so `if not watcher.poll()` reads as "nothing
