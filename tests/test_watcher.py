@@ -252,6 +252,37 @@ def test_a_chain_forked_below_start_height_is_still_read_from_it():
     assert watcher.pending == ()
 
 
+def test_a_tip_that_fell_below_start_height_does_not_widen_the_read():
+    chain = ScriptedChain()
+    watcher = DepositWatcher(
+        chain, ["addr-1"], policy=1, start_height=4, reorg_depth=6
+    )
+    chain.mine(count=4)
+    original = chain.mine(pay("tx-a"))
+
+    assert keys(watcher.poll().confirmed) == [("tx-a", 0)]
+    assert chain.last_query == (("addr-1",), 4)
+
+    chain.fork(2)
+    reorg = watcher.poll()
+
+    assert chain.last_query == (("addr-1",), 4)
+    assert keys(reorg.reverted) == [("tx-a", 0)]
+    assert reorg.reverted[0].block == original
+    assert watcher.last_tip == 2
+    assert watcher.revertible == ()
+
+    chain.mine(count=2)
+    replacement = chain.mine(pay("tx-a"))
+    credit = watcher.poll()
+
+    assert chain.last_query == (("addr-1",), 4)
+    assert watcher.last_since_height == 4
+    assert keys(credit.confirmed) == [("tx-a", 0)]
+    assert credit.confirmed[0].block == replacement
+    assert credit.confirmed[0].block != original
+
+
 def test_a_transfer_that_vanishes_before_confirming_is_never_reported():
     chain = ScriptedChain()
     watcher = DepositWatcher(chain, ["addr-1"], policy=3, reorg_depth=5)
