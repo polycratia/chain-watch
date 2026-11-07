@@ -179,6 +179,30 @@ def test_the_watcher_reports_where_the_last_poll_started_reading():
     assert chain.last_query == (("addr-1",), 7)
 
 
+def test_a_resumed_watcher_has_no_read_height_until_it_polls():
+    chain = ScriptedChain()
+    watcher = DepositWatcher(chain, ["addr-1"], policy=2, reorg_depth=2)
+    chain.mine(count=3)
+    assert not watcher.poll()
+    assert watcher.last_since_height == 2
+
+    snapshot = json.loads(json.dumps(watcher.state.to_dict()))
+    resumed = DepositWatcher(
+        chain,
+        ["addr-1"],
+        policy=2,
+        reorg_depth=2,
+        state=WatcherState.from_dict(snapshot),
+    )
+
+    assert resumed.last_tip == 3
+    assert resumed.last_since_height is None
+
+    chain.mine(count=2)
+    assert not resumed.poll()
+    assert resumed.last_since_height == 4
+
+
 def test_a_pending_transfer_below_the_window_is_dropped_not_confirmed():
     chain = ScriptedChain()
     watcher = DepositWatcher(chain, ["addr-1"], policy=4, reorg_depth=1)

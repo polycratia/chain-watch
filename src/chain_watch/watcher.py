@@ -124,7 +124,14 @@ class DepositWatcher:
 
     @property
     def last_since_height(self) -> int | None:
-        """Height the last poll read from, or ``None`` before the first."""
+        """Height the last poll read from, or ``None`` before the first.
+
+        ``None`` says this process has not polled yet, not that a poll read
+        without a floor. It is a property of the watcher object rather than of
+        the bookkeeping, so a watcher resumed from a snapshot reports ``None``
+        until it polls, however far the chain it resumes on has moved; the
+        first poll then reports a real height like any other.
+        """
         return self._last_since_height
 
     @property
