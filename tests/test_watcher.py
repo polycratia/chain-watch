@@ -232,6 +232,26 @@ def test_start_height_keeps_the_watcher_off_older_blocks():
     assert keys(result.confirmed) == [("tx-new", 0)]
 
 
+def test_a_chain_forked_below_start_height_is_still_read_from_it():
+    chain = ScriptedChain()
+    watcher = DepositWatcher(
+        chain, ["addr-1"], policy=1, start_height=5, reorg_depth=2
+    )
+    chain.mine(count=8)
+
+    assert not watcher.poll()
+    assert chain.last_query == (("addr-1",), 7)
+    assert watcher.last_tip == 8
+
+    chain.fork(2)
+    assert chain.tip().height == 2
+
+    assert not watcher.poll()
+    assert chain.last_query == (("addr-1",), 5)
+    assert watcher.last_since_height == 5
+    assert watcher.pending == ()
+
+
 def test_a_transfer_that_vanishes_before_confirming_is_never_reported():
     chain = ScriptedChain()
     watcher = DepositWatcher(chain, ["addr-1"], policy=3, reorg_depth=5)
